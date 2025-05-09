@@ -1,0 +1,4 @@
+CMake*.*
+CMake*/
+_deps/
+temp
