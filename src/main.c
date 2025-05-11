@@ -1,4 +1,5 @@
 #include <libtcc.h>
+#include <locale.h>
 #include <math.h>
 #include <raylib.h>
 #include <raymath.h>
@@ -8,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <wchar.h>
 
 /* --constants-- */
 #define MAX_VARIABLES 100
@@ -51,7 +51,7 @@ typedef enum {
 typedef struct Node {
   NodeType type;
   Vector2 position;
-  wchar_t *text;
+  char *text;
   Color instanceColor;
   bool isSelected;
   bool isEditing;
@@ -109,15 +109,21 @@ Vector2 GetClosestEdge(Node *startNode, Node *destNode, Font font);
 void DrawMenu(Color back, Font font);
 
 Font LoadFontT();
-wchar_t *CompileCode(Node *node, wchar_t *textBefore);
+char *CompileCode(Node *node, char *textBefore);
 char *CompileCodeToEXE(Node *node, char *fileName);
-wchar_t *append_string(const wchar_t *base, const wchar_t *addition);
+char *append_string(char *base, const char *addition);
 
-void remove_last_char(char *str) {
-  size_t len = strlen(str);
-  if (len > 0) {
-    str[len - 1] = '\0';
+void BackspaceUTF8(char *text) {
+  int len = strlen(text);
+  if (len == 0)
+    return;
+
+  int i = len - 1;
+  while (i > 0 && ((text[i] & 0xC0) == 0x80)) {
+    i--;
   }
+
+  text[i] = '\0';
 }
 
 Node *IfTypeExist(NodeType type) {
@@ -128,41 +134,9 @@ Node *IfTypeExist(NodeType type) {
   return NULL;
 }
 
-void process_text_input() {
-  int key = GetCharPressed(); // Tuşa basıldığında ASCII kodunu al
-
-  if (key == -1) {
-    return; // Hiçbir tuşa basılmadıysa işlemi sonlandır
-  }
-
-  wchar_t keyC = (wchar_t)key; // keyC'yi wchar_t tipine dönüştür
-
-  int textLen =
-      wcslen(editingNode->text); // geniş karakterler ile işlem yapıyoruz
-
-  // Eğer geçerli bir Türkçe karakterse, ekleyebiliriz
-  if ((key >= 32 && key <= 125) || key == L'ö' || key == L'ç' || key == L'ı' ||
-      key == L'ş' || key == L'ğ' || key == L'ü') {
-    editingNode->text = append_string(editingNode->text, &keyC);
-    textLen++;
-  }
-
-  // Backspace işlemi
-  if (IsKeyPressed(KEY_BACKSPACE)) {
-    textLen--;
-    if (textLen < 0)
-      textLen = 0;
-    editingNode->text[textLen] = L'\0'; // geniş karakter dizisini sonlandır
-  }
-
-  // Eğer seçilen node farklıysa, düzenleme bitirilir
-  if (selectedNode != editingNode) {
-    isEditing = false;
-    editingNode = NULL;
-  }
-}
-
 int main(void) {
+  setlocale(LC_ALL, "Turkish");
+
   InitWindow(800, 600, "DoraNode test 1.5");
   SetWindowState(FLAG_WINDOW_RESIZABLE);
   Font font = LoadFontT();
@@ -200,26 +174,30 @@ int main(void) {
       }
     }
 
-    if (doubleClick && selectedNode != NULL) {
+    if (doubleClick && selectedNode != NULL && selectedNode->editable) {
       editingNode = selectedNode;
       isEditing = true;
     }
 
     if (isEditing) {
       int key = GetCharPressed();
-      wchar_t keyC = (wchar_t)key;
-      int textLen = wcslen(editingNode->text);
 
-      if (key >= 32 && key <= 125) {
-        editingNode->text = append_string(editingNode->text, &keyC);
-        textLen++;
+      while (key > 0) {
+        if (key >= 32) {
+          char utf8[5] = {
+              0}; // UTF-8 karakterler en fazla 4 byte + null terminator
+          int utf8Size = 0;
+          const char *converted = CodepointToUTF8(key, &utf8Size);
+          memcpy(utf8, converted, utf8Size);
+          utf8[utf8Size] = '\0';
+
+          editingNode->text = append_string(editingNode->text, utf8);
+        }
+        key = GetCharPressed(); // birden fazla tuş varsa sırayla al
       }
 
       if (IsKeyPressed(KEY_BACKSPACE)) {
-        textLen--;
-        if (textLen < 0)
-          textLen = 0;
-        editingNode->text[textLen] = '\0';
+        BackspaceUTF8(editingNode->text);
       }
 
       if (selectedNode != editingNode) {
@@ -374,21 +352,17 @@ void DrawMenu(Color back, Font font) {
 }
 
 Font LoadFontT() {
+
   int codepoints[] = {
-      32, // Space
-      33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,  44,  45,
-      46,  47,                                         // !"#$%&'()*+,-./
-      48,  49,  50,  51,  52,  53,  54,  55,  56,  57, // 0-9
-      58,  59,  60,  61,  62,  63,  64,                // :;<=>?@
-      65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,
-      78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90, // A-Z
-      91,  92,  93,  94,  95,  96,                                    // [\]^_`
-      97,  98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
-      110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, // a-z
-      123, 124, 125, 126,                                              // {|}~
-      199, 214, 220, 304,           // Ç Ö Ü İ
-      231, 246, 252, 287, 305, 351, // ç ö ü ğ ı ş
-  };
+      32,  33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,  44,  45,
+      46,  47,  48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,
+      60,  61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,  72,  73,
+      74,  75,  76,  77,  78,  79,  80,  81,  82,  83,  84,  85,  86,  87,
+      88,  89,  90,  91,  92,  93,  94,  95,  96,  97,  98,  99,  100, 101,
+      102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115,
+      116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
+
+      199, 214, 220, 304, 286, 350, 231, 246, 252, 287, 305, 351};
 
   int codepointCount = sizeof(codepoints) / sizeof(codepoints[0]);
 
@@ -420,7 +394,7 @@ void AddNode(NodeType type, Vector2 pos) {
 Node CreateNode(NodeType type, Vector2 pos) {
   Node node = {type,
                pos,
-               (wchar_t *)strdup(NODE_TYPE_NAME[type]),
+               (char *)strdup(NODE_TYPE_NAME[type]),
                NODE_TYPE_COLOR[type],
                false,
                false,
@@ -665,27 +639,39 @@ char *strprintf(const char *fmt, ...) {
   return str; // Döndürülen belleği serbest bırakmayı unutma
 }
 
-wchar_t *append_string(const wchar_t *base, const wchar_t *addition) {
+char *append_string(char *base, const char *addition) {
   if (!base)
-    base = L"";
+    base = "";
   if (!addition)
-    addition = L"";
+    addition = "";
 
-  size_t len1 = wcslen(base);
-  size_t len2 = wcslen(addition);
+  size_t len1 = strlen(base);
+  size_t len2 = strlen(addition);
 
-  wchar_t *result =
-      malloc((len1 + len2 + 1) * sizeof(wchar_t)); // +1 for the null terminator
+  char *result =
+      malloc((len1 + len2 + 1) * sizeof(char)); // +1 for the null terminator
   if (!result)
     return NULL;
 
-  wcscpy(result, base);
-  wcscat(result, addition);
+  strcpy(result, base);
+  strcat(result, addition);
 
   return result;
 }
 
-wchar_t *CompileVar(Node *node) {
+void addToVars(char *type, char *name) {
+  Var_type varType;
+  if (strcmp(type, "float") == 0)
+    varType = VAR_FLOAT;
+  else if (strcmp(type, "int") == 0)
+    varType = VAR_INT;
+  else
+    varType = VAR_STRING;
+
+  vars[var_count++] = (Variable){.name = strdup(name), .type = varType};
+}
+
+char *CompileVar(Node *node) {
   char typestr[16] = {0}; // küçük tür isimleri için yeterli
   char name[64] = {0};
   int t_index = 0, n_index = 0;
@@ -697,6 +683,12 @@ wchar_t *CompileVar(Node *node) {
       continue;
     }
     if (isName) {
+      if (node->text[i] == ',') {
+        addToVars(typestr, name);
+        memset(name, 0, 64 * sizeof(char));
+        n_index = 0;
+        continue;
+      }
       if (n_index < sizeof(name) - 1)
         name[n_index++] = node->text[i];
     } else {
@@ -705,16 +697,7 @@ wchar_t *CompileVar(Node *node) {
     }
   }
 
-  Var_type type;
-  if (strcmp(typestr, "float") == 0)
-    type = VAR_FLOAT;
-  else if (strcmp(typestr, "int") == 0)
-    type = VAR_INT;
-  else
-    type = VAR_STRING;
-
-  vars[var_count++] = (Variable){.name = strdup(name), .type = type};
-  return (wchar_t *)strprintf("\t%s;\n", node->text);
+  return (char *)strprintf("\t%s;\n", node->text);
 }
 
 Variable *isdefined(char *name) {
@@ -725,27 +708,27 @@ Variable *isdefined(char *name) {
   return NULL;
 }
 
-wchar_t *CompileInput(Node *node) {
+char *CompileInput(Node *node) {
   Variable *var = isdefined((char *)node->text);
   if (var == NULL)
-    return L"<DORANODEHATA>";
+    return "<DORANODEHATA>";
 
   const char *format = (var->type == VAR_FLOAT) ? "%f"
                        : (var->type == VAR_INT) ? "%d"
                                                 : "%s";
 
-  wchar_t *text;
+  char *text;
   if (var->type == VAR_STRING) {
-    text = (wchar_t *)strprintf("\tfgets(%s, 128, stdin);\n", var->name);
+    text = (char *)strprintf("\tfgets(%s, 128, stdin);\n", var->name);
   } else {
-    text = (wchar_t *)strprintf("\tscanf(\"%s\", &%s);\n", format, var->name);
+    text = (char *)strprintf("\tscanf(\"%s\", &%s);\n", format, var->name);
   }
 
   return text;
 }
 
-wchar_t *CompileLoop(Node *node) {
-  wchar_t *text;
+char *CompileLoop(Node *node) {
+  char *text;
   int semicolonCount = 0;
   for (int i = 0; node->text[i] != '\0'; i++) {
     if (node->text[i] == ';')
@@ -753,56 +736,55 @@ wchar_t *CompileLoop(Node *node) {
   }
 
   if (semicolonCount == 0) {
-    text = (wchar_t *)strprintf("\twhile (%s) {\n", node->text);
+    text = (char *)strprintf("\twhile (%s) {\n", node->text);
   } else {
-    text = (wchar_t *)strprintf("\tfor (%s) {\n", node->text);
+    text = (char *)strprintf("\tfor (%s) {\n", node->text);
   }
 
   text = CompileCode(node->next, text);
-  text = append_string(text, L"\t}\n");
+  text = append_string(text, "\t}\n");
   text = CompileCode(node->alt_next, text);
 
-  return (wchar_t *)text;
+  return (char *)text;
 }
 
-wchar_t *CompileCode(Node *node, wchar_t *textBefore) {
+char *CompileCode(Node *node, char *textBefore) {
   if (node == NULL)
-    return L"<DORANODEHATA>";
+    return "<DORANODEHATA>";
 
-  wchar_t *text = textBefore;
+  char *text = textBefore;
 
   if (node->type == NODE_START) {
-    text = append_string(text, L"int main(void) {\n");
+    text = append_string(text, "int main(void) {\n");
   }
 
   if (visitedNodes[node->id] == true && node->type == NODE_LOOP) {
-    text = append_string(text, L"\tcontinue;\n");
+    text = append_string(text, "\tcontinue;\n");
     return text;
   } else if (visitedNodes[node->id] == true) {
-    text = append_string(
-        text, (wchar_t *)strprintf("\tgoto doraNode_%i;\n", node->id));
+    text = append_string(text,
+                         (char *)strprintf("\tgoto doraNode_%i;\n", node->id));
     return text;
   }
 
   visitedNodes[node->id] = true;
 
   if (node->type != NODE_START)
-    text =
-        append_string(text, (wchar_t *)strprintf("doraNode_%i:\n", node->id));
+    text = append_string(text, (char *)strprintf("doraNode_%i:\n", node->id));
   switch (node->type) {
   case NODE_START:
     text = CompileCode(node->next, text);
     break;
   case NODE_END:
-    text = append_string(text, L"\treturn 0;\n}\n");
+    text = append_string(text, "\treturn 0;\n}\n");
     break;
   case NODE_INPUT:
     text = append_string(text, CompileInput(node));
     text = CompileCode(node->next, text);
     break;
   case NODE_OUTPUT:
-    text = append_string(text,
-                         (wchar_t *)strprintf("\tprintf(%s);\n", node->text));
+    text =
+        append_string(text, (char *)strprintf("\tprintf(%s);\n", node->text));
     text = CompileCode(node->next, text);
     break;
   case NODE_VARIABLE:
@@ -811,7 +793,7 @@ wchar_t *CompileCode(Node *node, wchar_t *textBefore) {
     break;
   case NODE_DECISION:
     text = append_string(
-        text, (wchar_t *)strprintf(
+        text, (char *)strprintf(
                   "\tif (%s) goto doraNode_%i;\n\telse goto doraNode_%i;\n",
                   node->text, node->next->id, node->alt_next->id));
     text = CompileCode(node->next, text);
@@ -821,7 +803,7 @@ wchar_t *CompileCode(Node *node, wchar_t *textBefore) {
     text = append_string(text, CompileLoop(node));
     break;
   default:
-    text = append_string(text, (wchar_t *)strprintf("\t%s;\n", node->text));
+    text = append_string(text, (char *)strprintf("\t%s;\n", node->text));
     text = CompileCode(node->next, text);
     break;
   }
@@ -831,9 +813,8 @@ wchar_t *CompileCode(Node *node, wchar_t *textBefore) {
 
 char *CompileCodeToEXE(Node *node, char *fileName) {
   memset(visitedNodes, 0, nodeCount * sizeof(bool));
-
   char *code = (char *)CompileCode(
-      node, L"#include <stdio.h>\n#include <stdbool.h>\n#include <math.h>\n\n");
+      node, "#include <stdio.h>\n#include <stdbool.h>\n#include <math.h>\n\n");
 
   printf("%s\n", code);
 
@@ -849,7 +830,6 @@ char *CompileCodeToEXE(Node *node, char *fileName) {
 
   tcc_set_output_type(s, TCC_OUTPUT_EXE);
 
-  // libm bağlantısı ekle
   tcc_add_library(s, "m");
 
   if (tcc_compile_string(s, code) == -1) {
