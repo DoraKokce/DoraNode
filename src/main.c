@@ -65,11 +65,9 @@ static Node *nodes = NULL;
 static bool *visitedNodes = NULL;
 static int nodeCount = 0;
 
-typedef enum { VAR_FLOAT, VAR_INT, VAR_STRING } Var_type;
-
 typedef struct {
   char *name;
-  Var_type type;
+  char *type;
 } Variable;
 
 static Variable vars[MAX_VARIABLES];
@@ -660,41 +658,42 @@ char *append_string(char *base, const char *addition) {
 }
 
 void addToVars(char *type, char *name) {
-  Var_type varType;
-  if (strcmp(type, "float") == 0)
-    varType = VAR_FLOAT;
-  else if (strcmp(type, "int") == 0)
-    varType = VAR_INT;
-  else
-    varType = VAR_STRING;
-
-  vars[var_count++] = (Variable){.name = strdup(name), .type = varType};
+  vars[var_count++] = (Variable){.name = strdup(name), .type = strdup(type)};
 }
 
 char *CompileVar(Node *node) {
-  char typestr[16] = {0}; // küçük tür isimleri için yeterli
-  char name[64] = {0};
-  int t_index = 0, n_index = 0;
-  bool isName = false;
+  char type[32] = {0};
+  int i = 0, t_index = 0;
 
-  for (int i = 0; node->text[i] != '\0'; i++) {
-    if (node->text[i] == ' ') {
-      isName = true;
-      continue;
-    }
-    if (isName) {
-      if (node->text[i] == ',') {
-        addToVars(typestr, name);
-        memset(name, 0, 64 * sizeof(char));
-        n_index = 0;
-        continue;
-      }
+  while (node->text[i] && node->text[i] != ' ') {
+    if (t_index < sizeof(type) - 1)
+      type[t_index++] = node->text[i++];
+  }
+  type[t_index] = '\0';
+
+  while (node->text[i] == ' ')
+    i++;
+
+  char name[64] = {0};
+  int n_index = 0;
+
+  for (; node->text[i]; i++) {
+    char c = node->text[i];
+
+    if (c == ',') {
+      name[n_index] = '\0';
+      addToVars(type, name);
+      n_index = 0;
+      memset(name, 0, sizeof(name));
+    } else if (c != ' ') {
       if (n_index < sizeof(name) - 1)
-        name[n_index++] = node->text[i];
-    } else {
-      if (t_index < sizeof(typestr) - 1)
-        typestr[t_index++] = node->text[i];
+        name[n_index++] = c;
     }
+  }
+
+  if (n_index > 0) {
+    name[n_index] = '\0';
+    addToVars(type, name);
   }
 
   return (char *)strprintf("\t%s;\n", node->text);
@@ -708,23 +707,57 @@ Variable *isdefined(char *name) {
   return NULL;
 }
 
+bool cmpStr(char *a, char *b) { return strcmp(a, b) == 0; }
+
+char *getScanfFormat(char *type) {
+  return cmpStr(type, "string")   ? "%s"
+         : cmpStr(type, "char")   ? "%c"
+         : cmpStr(type, "int")    ? "%d"
+         : cmpStr(type, "float")  ? "%f"
+         : cmpStr(type, "double") ? "%lf"
+         : cmpStr(type, "long")   ? "%ld"
+                                  : "";
+}
+
 char *CompileInput(Node *node) {
-  Variable *var = isdefined((char *)node->text);
-  if (var == NULL)
+  char *nodeText = node->text;
+  char prompt[256] = {0};
+  char varname[64] = {0};
+
+  const char *quote_start = strchr(nodeText, '\"');
+  const char *quote_end = strrchr(nodeText, '\"');
+  if (!quote_start || !quote_end || quote_start == quote_end)
+    return NULL;
+
+  int prompt_len = quote_end - quote_start - 1;
+  strncpy(prompt, quote_start + 1, prompt_len);
+  prompt[prompt_len] = '\0';
+
+  const char *comma = strchr(quote_end, ',');
+  if (!comma)
+    return NULL;
+
+  while (*comma == ',' || *comma == ' ')
+    comma++;
+  strncpy(varname, comma, sizeof(varname) - 1);
+  varname[sizeof(varname) - 1] = '\0';
+
+  Variable *var = isdefined(varname);
+  if (!var) {
+    fputs("Değer tanımlanmamış!", stdout);
     return "<DORANODEHATA>";
-
-  const char *format = (var->type == VAR_FLOAT) ? "%f"
-                       : (var->type == VAR_INT) ? "%d"
-                                                : "%s";
-
-  char *text;
-  if (var->type == VAR_STRING) {
-    text = (char *)strprintf("\tfgets(%s, 128, stdin);\n", var->name);
-  } else {
-    text = (char *)strprintf("\tscanf(\"%s\", &%s);\n", format, var->name);
   }
+  char *type = var->type;
 
-  return text;
+  if (strcmp(type, "char*") == 0 || strcmp(type, "string") == 0) {
+    return strprintf("printf(\"%s\");\nfgets(%s, sizeof(%s), "
+                     "stdin);\n%s[strcspn(%s, \"\\n\")] = 0;\n",
+                     prompt, varname, varname, varname, varname);
+  } else {
+    char *format = getScanfFormat(type);
+    return strprintf("printf(\"%s\");\nscanf(\"%s\", &%s);\n", prompt, format,
+                     varname);
+  }
 }
 
 char *CompileLoop(Node *node) {

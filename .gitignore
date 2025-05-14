@@ -1,4 +1,9 @@
 CMake*.*
 CMake*/
 _deps/
+cmake*
+CPack*
+MakeFile
 temp
+doranode
+toolchains/
