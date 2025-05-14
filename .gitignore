@@ -3,7 +3,7 @@ CMake*/
 _deps/
 cmake*
 CPack*
-MakeFile
+Makefile
 temp
 doranode
 toolchains/
